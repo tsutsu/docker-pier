@@ -1,0 +1,111 @@
+#!/usr/bin/env ruby
+require "docker-pier"
+require "main"
+
+Main do
+  db do
+    create_table(:clusters) do
+      primary_key :id
+      String :name, unique: true, null: false
+      String :pier_uri, null: false
+    end unless table_exists?(:clusters)
+  end
+
+  def run
+    $stderr.puts "use `#{File.basename($0)} --help` for usage"
+  end
+
+
+  mode 'list' do
+    def run
+      db[:clusters].each do |cluster|
+        puts "#{cluster[:name]}: #{cluster[:pier_uri]}"
+      end
+    end
+  end
+
+  mode 'detach' do
+    argument('name'){
+      description "a cluster nickname"
+      required
+    }
+
+    def run
+      cluster_name = params[:name].values.first
+      db[:clusters].where(name: cluster_name).delete
+    end
+  end
+
+  mode 'attach' do
+    argument('name'){
+      description "nickname for the new cluster"
+      required
+    }
+
+    argument('uri'){
+      description "URI of the cluster's pier"
+      required
+    }
+
+    def run
+      cluster_name = params[:name].values.first
+      pier_uri = URI.parse('//' + params[:uri].values.first)
+
+      # test validity
+      pier = DockerPier::Pier.new(pier_uri, name: cluster_name)
+      pier.bootstrap!
+
+      pier.libvirt.get_node_info
+      Docker.info(pier.docker)
+      pier.ssh.exec! 'pwd'
+
+      db[:clusters].insert(nil, cluster_name, pier_uri.to_s)
+      puts "'#{cluster_name}' attached"
+    end
+  end
+
+  mode 'switch' do
+    argument('name'){
+      description "nickname of the cluster to switch to"
+      required
+    }
+
+    def run
+      cluster_name = params[:name].values.first
+      pier = db[:clusters].where(name: cluster_name).first
+      unless pier
+        $stderr.puts "unknown cluster '#{cluster_name}'"
+        return false
+      end
+
+      pier = DockerPier::Pier.new(pier[:pier_uri], name: pier[:name])
+
+      puts <<~EOF
+        export DOCKER_TLS_VERIFY="1"
+        export DOCKER_HOST="#{pier.resolved_docker_uri}"
+        export DOCKER_CERT_PATH="#{pier.x509_dir}"
+        export DOCKER_MACHINE_NAME="#{cluster_name}"
+      EOF
+    end
+  end
+
+
+  mode 'hook:install' do
+    def run
+      puts <<~EOF
+        pier ()
+        {
+          local subcommand="$1"; shift
+          case "${subcommand}" in
+          switch)
+            eval "$(command docker-pier cluster:switch "$@")"
+            ;;
+          *)
+            command docker-pier "$@"
+            ;;
+          esac
+        }
+      EOF
+    end
+  end
+end
