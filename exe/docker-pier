@@ -131,7 +131,7 @@ Main do
   def modified_ps1_ln
     ps1 = ENV['PS1']
     return '' if ps1 =~ /DOCKER_MACHINE_NAME/
-    escaped_ps1 = ps1.gsub(/(\\\[.+?\\\])|(\$\{.+?\})/){ |s| s.gsub(/:/, '&&COLON&&') }
+    escaped_ps1 = ps1.gsub(/(\\\[.+?\\\])|(\$\{.+?\})/){ |s1,s2| (s1||s2).gsub(/:/, '&&COLON&&') }
     escaped_ps1_parts = escaped_ps1.split(':')
     return '' unless escaped_ps1_parts.length == 2
     ps1_parts = escaped_ps1_parts.map{ |s| s.gsub(/&&COLON&&/, ':') }
@@ -139,7 +139,15 @@ Main do
   end
 
   mode 'hook:install' do
+    option('ps1'){
+      argument :optional
+      cast :bool
+      description 'enable ps1 modification'
+    }
+
     def run
+      ps1_ln = params['ps1'].value ? modified_ps1_ln : ''
+
       puts <<~EOF
         pier ()
         {
@@ -155,7 +163,7 @@ Main do
           esac
         }
 
-        #{modified_ps1_ln}
+        #{ps1_ln}
       EOF
     end
   end
