@@ -2,6 +2,7 @@
 require "docker-pier"
 require "main"
 require "highline"
+require "paint"
 
 Main do
   db do
@@ -19,8 +20,16 @@ Main do
 
   mode 'list' do
     def run
+      in_use_cluster_name = ENV['DOCKER_MACHINE_NAME']
+
       db[:clusters].each do |cluster|
-        puts "#{cluster[:name]}: #{cluster[:pier_uri]}"
+        cluster_ansi = if cluster[:name] == in_use_cluster_name
+          Paint['*' + cluster[:name], :blue]
+        else
+          ' ' + cluster[:name]
+        end
+
+        puts "#{cluster_ansi}: #{cluster[:pier_uri]}"
       end
     end
   end
@@ -117,6 +126,17 @@ Main do
     end
   end
 
+  DMACHINE_PS1 = '${DOCKER_MACHINE_NAME:+ \\[\\033[34m\\]*$DOCKER_MACHINE_NAME\\[\\033[m\\]}'
+
+  def modified_ps1_ln
+    ps1 = ENV['PS1']
+    return '' if ps1 =~ /DOCKER_MACHINE_NAME/
+    escaped_ps1 = ps1.gsub(/(\\\[.+?\\\])|(\$\{.+?\})/){ |s| s.gsub(/:/, '&&COLON&&') }
+    escaped_ps1_parts = escaped_ps1.split(':')
+    return '' unless escaped_ps1_parts.length == 2
+    ps1_parts = escaped_ps1_parts.map{ |s| s.gsub(/&&COLON&&/, ':') }
+    "export PS1='#{ps1_parts[0]}#{DMACHINE_PS1}:#{ps1_parts[1]}'"
+  end
 
   mode 'hook:install' do
     def run
@@ -134,6 +154,8 @@ Main do
             ;;
           esac
         }
+
+        #{modified_ps1_ln}
       EOF
     end
   end
