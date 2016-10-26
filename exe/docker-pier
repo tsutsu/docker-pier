@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require "docker-pier"
 require "main"
+require "highline"
 
 Main do
   db do
@@ -32,7 +33,17 @@ Main do
 
     def run
       cluster_name = params[:name].values.first
-      db[:clusters].where(name: cluster_name).delete
+      pier = db[:clusters].where(name: cluster_name).delete
+
+      in_use_cluster_name = ENV['DOCKER_MACHINE_NAME']
+      if cluster_name == in_use_cluster_name
+        puts <<~EOF
+          unset DOCKER_TLS_VERIFY
+          unset DOCKER_HOST
+          unset DOCKER_CERT_PATH
+          unset DOCKER_MACHINE_NAME
+        EOF
+      end
     end
   end
 
@@ -49,7 +60,7 @@ Main do
 
     def run
       cluster_name = params[:name].values.first
-      pier_uri = URI.parse('//' + params[:uri].values.first)
+      pier_uri = URI.parse('//' + params[:uri].values.first + '/')
 
       # test validity
       pier = DockerPier::Pier.new(pier_uri, name: cluster_name)
@@ -60,11 +71,17 @@ Main do
       pier.ssh.exec! 'pwd'
 
       db[:clusters].insert(nil, cluster_name, pier_uri.to_s)
-      puts "'#{cluster_name}' attached"
+
+      puts <<~EOF
+        export DOCKER_TLS_VERIFY=1
+        export DOCKER_HOST=#{pier.resolved_docker_uri}
+        export DOCKER_CERT_PATH=#{pier.x509_dir}
+        export DOCKER_MACHINE_NAME=#{cluster_name}
+      EOF
     end
   end
 
-  mode 'switch' do
+  mode 'on' do
     argument('name'){
       description "nickname of the cluster to switch to"
       required
@@ -81,10 +98,21 @@ Main do
       pier = DockerPier::Pier.new(pier[:pier_uri], name: pier[:name])
 
       puts <<~EOF
-        export DOCKER_TLS_VERIFY="1"
-        export DOCKER_HOST="#{pier.resolved_docker_uri}"
-        export DOCKER_CERT_PATH="#{pier.x509_dir}"
-        export DOCKER_MACHINE_NAME="#{cluster_name}"
+        export DOCKER_TLS_VERIFY=1
+        export DOCKER_HOST=#{pier.resolved_docker_uri}
+        export DOCKER_CERT_PATH=#{pier.x509_dir}
+        export DOCKER_MACHINE_NAME=#{cluster_name}
+      EOF
+    end
+  end
+
+  mode 'off' do
+    def run
+      puts <<~EOF
+        unset DOCKER_TLS_VERIFY
+        unset DOCKER_HOST
+        unset DOCKER_CERT_PATH
+        unset DOCKER_MACHINE_NAME
       EOF
     end
   end
@@ -95,10 +123,11 @@ Main do
       puts <<~EOF
         pier ()
         {
-          local subcommand="$1"; shift
+          local subcommand="$1"
           case "${subcommand}" in
-          switch)
-            eval "$(command docker-pier cluster:switch "$@")"
+          on|off|attach|detach)
+            shift
+            eval "$(command docker-pier "${subcommand}" "$@")"
             ;;
           *)
             command docker-pier "$@"
@@ -106,6 +135,63 @@ Main do
           esac
         }
       EOF
+    end
+  end
+
+
+  mode 'nodes' do
+    def run
+      cluster_name = ENV['DOCKER_MACHINE_NAME']
+      pier = db[:clusters].where(name: cluster_name).first
+      unless pier
+        $stderr.puts "unknown cluster '#{cluster_name}'"
+        return false
+      end
+      pier = DockerPier::Pier.new(pier[:pier_uri], name: pier[:name])
+
+      pier.nodes.each do |node|
+        puts node.inspect
+      end
+    end
+  end
+
+  mode 'logs' do
+    def run
+      cluster_name = ENV['DOCKER_MACHINE_NAME']
+      pier = db[:clusters].where(name: cluster_name).first
+      unless pier
+        $stderr.puts "unknown cluster '#{cluster_name}'"
+        return false
+      end
+      pier = DockerPier::Pier.new(pier[:pier_uri], name: pier[:name])
+
+      handle_maxlen = 0
+      tty_width = HighLine::SystemExtensions.terminal_size[0]
+
+      pier.logs.stream! do |event|
+        next if event.lines.empty?
+
+        handle_ansi = event.task.name
+        handle_maxlen = [handle_maxlen, handle_ansi.length].max
+        handle_ansi = handle_ansi.rjust(handle_maxlen, ' ')
+        handle_ansi = Paint[handle_ansi, event.task.color]
+
+        time_ansi = Paint[event.time.strftime("%H:%M:%S"), :white]
+
+        ln1_prefix_ansi = "%s %s " % [handle_ansi, time_ansi]
+        lns_indent = ' ' * Paint.unpaint(ln1_prefix_ansi).length
+        lns_color = (event.type == :error) ? :red : :default
+
+        tty_remain = tty_width - lns_indent.length
+        lns = event.lines.dup
+        lns = lns.map{ |ln| ln.gsub(/(.{1,#{tty_remain}})/, "\\1\n").split("\n") }.flatten
+
+        puts ln1_prefix_ansi + Paint[lns.shift, lns_color]
+
+        lns.each do |ln|
+          puts lns_indent + Paint[ln, lns_color]
+        end
+      end
     end
   end
 end

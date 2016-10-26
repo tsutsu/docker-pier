@@ -31,4 +31,6 @@ Gem::Specification.new do |spec|
   spec.add_runtime_dependency     "main", "~> 6.2", ">= 6.2.1"
   spec.add_runtime_dependency     "sequel", "~> 4.39"
   spec.add_runtime_dependency     "amalgalite", "~> 1.5"
+  spec.add_runtime_dependency     "color", "~> 1.8"
+  spec.add_runtime_dependency     "paint", "~> 1.0", ">= 1.0.1"
 end

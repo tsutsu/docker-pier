@@ -1,5 +1,6 @@
 require 'docker-pier/version'
 require 'docker'
+require 'docker/swarm'
 require 'fog/libvirt'
 require 'net/ssh'
 require 'net/scp'
@@ -12,7 +13,7 @@ class DockerPier::Pier
   end
 
   def initialize(pier_uri, opts = {})
-    @name = opts.delete(:name) || Digest::SHA1.hexdigest(pier_uri)
+    @name = opts.delete(:name) || ENV['DOCKER_MACHINE_NAME'] || Digest::SHA1.hexdigest(pier_uri)
 
     pier_uri = URI.parse(pier_uri.to_s) unless pier_uri.kind_of?(URI)
 
@@ -31,11 +32,12 @@ class DockerPier::Pier
 
     @ssh_uri = pier_uri.dup.tap do |uri|
       uri.scheme = 'ssh'
-      uri.port = nil
+      uri.port = 22
       uri.path = '/'
     end
   end
 
+  attr_reader :name
   attr_reader :libvirt_uri
   attr_reader :docker_uri
   attr_reader :ssh_uri
@@ -64,7 +66,7 @@ class DockerPier::Pier
   end
 
   def ssh
-    @ssh ||= Net::SSH.start(ssh_uri.hostname, ssh_uri.user, password: ssh_uri.password)
+    @ssh ||= Net::SSH.start(@ssh_uri.hostname, @ssh_uri.user, password: @ssh_uri.password)
   end
 
 
@@ -86,5 +88,15 @@ class DockerPier::Pier
       system 'tar', '-x', '-f', local_export_path.to_s
       local_export_path.unlink
     end
+  end
+
+
+  def nodes
+    docker_nodes = Docker::Swarm::Node.all({}, self.docker)
+    docker_nodes.map{ |d| DockerPier::Node.new(d, self) }
+  end
+
+  def logs
+    DockerPier::LogStream.new(self)
   end
 end
