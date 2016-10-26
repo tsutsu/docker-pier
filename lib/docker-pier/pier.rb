@@ -82,7 +82,7 @@ class DockerPier::Pier
 
     self.ssh.exec!(<<~EOF)
       if [ ! -f '#{remote_export_path}' ]; then
-        /var/lib/private-x509/gen_bundle '#{own_hostname}'
+        /var/lib/private-x509/gen_bundle client '#{own_hostname}'
       fi
     EOF
 
