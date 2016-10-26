@@ -42,6 +42,12 @@ class DockerPier::Pier
   attr_reader :docker_uri
   attr_reader :ssh_uri
 
+  def ssh_connstring
+    host_part = @ssh_uri.hostname
+    host_part = ("%s@%s" % [@ssh_uri.user, host_part]) if @ssh_uri.user
+    host_part = ("-p %d %s" % [@ssh_uri.port, host_part]) if (@ssh_uri.port and @ssh_uri.port != 22)
+    host_part
+  end
 
   def x509_dir
     Pathname.new(ENV['HOME']) + '.docker-pier' + 'x509' + @name

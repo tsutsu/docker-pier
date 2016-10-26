@@ -216,4 +216,19 @@ Main do
       end
     end
   end
+
+  mode 'shell' do
+    def run
+      cluster_name = ENV['DOCKER_MACHINE_NAME']
+      pier = db[:clusters].where(name: cluster_name).first
+      unless pier
+        $stderr.puts "unknown cluster '#{cluster_name}'"
+        return false
+      end
+      pier = DockerPier::Pier.new(pier[:pier_uri], name: pier[:name])
+
+      execv = ['ssh', '-A', pier.ssh_connstring] + ARGV[1..-1]
+      Kernel.exec(*execv)
+    end
+  end
 end
